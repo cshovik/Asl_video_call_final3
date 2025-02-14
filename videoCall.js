@@ -30,7 +30,6 @@ function startVideoCall(name) {
   socket.on("users", (users) => {
     users.forEach((user) => {
       if (user.id !== socket.id && !peerConnections[user.id]) {
-        // Initiate call only if our socket id is lexicographically lower.
         if (socket.id < user.id) {
           initiateCall(user.id, user.name);
         }
@@ -77,7 +76,6 @@ function startVideoCall(name) {
   
   socket.on("chat", (data) => {
     appendChatMessage(data);
-    // If a chat message is flagged as speech and includes an audio URL, play it.
     if (data.isSpeech && data.audio_url) {
       let audio = new Audio(data.audio_url);
       audio.play().catch(err => console.error("Audio play error:", err));
@@ -148,7 +146,7 @@ function addVideoStream(name, stream, isLocal = false, id = "local") {
     const video = existing.querySelector("video");
     if (video.srcObject !== stream) {
       video.srcObject = stream;
-      video.play().catch((err) => console.error("Error playing video:", err));
+      video.play().catch(err => console.error("Error playing video:", err));
     }
     const label = existing.querySelector(".video-label");
     label.textContent = name;
@@ -187,15 +185,17 @@ function updateVideoLayout() {
   }
 }
 
-/* --- Sign Detection (ASL) --- */
+/* --- Sign Detection (ASL / ISL) --- */
 function processASL() {
   if (!detectASL) return;
   const localWrapper = document.querySelector(`.video-wrapper[data-id="local"]`);
   if (!localWrapper) return;
+  
   const videoElem = localWrapper.querySelector("video");
   if (!videoElem || videoElem.readyState !== videoElem.HAVE_ENOUGH_DATA) {
     return setTimeout(processASL, 300);
   }
+  
   let aslCanvas = localWrapper.querySelector("#aslCanvas");
   if (!aslCanvas) {
     aslCanvas = document.createElement("canvas");
@@ -208,13 +208,21 @@ function processASL() {
     aslCanvas.style.pointerEvents = "none";
     localWrapper.appendChild(aslCanvas);
   }
+  
   const context = aslCanvas.getContext("2d");
   aslCanvas.width = videoElem.videoWidth;
   aslCanvas.height = videoElem.videoHeight;
   context.drawImage(videoElem, 0, 0, aslCanvas.width, aslCanvas.height);
+  
   aslCanvas.toBlob((blob) => {
     const formData = new FormData();
     formData.append("frame", blob, "frame.jpg");
+    
+    // Use the chosen model type based on dropdown:
+    // "america" -> "american", "india" -> "indian"
+    let chosenModel = (window.selectedSignLanguage === "india") ? "indian" : "american";
+    formData.append("modelType", chosenModel);
+    
     fetch("/detect", {
       method: "POST",
       body: formData,
@@ -231,7 +239,7 @@ function processASL() {
           context.font = "16px Arial";
           context.fillText(`${det.label} (${det.confidence.toFixed(2)})`, det.x1, det.y1 - 5);
         });
-        // Append the first detected letter to the message box if not already there.
+  
         if (detections.length > 0) {
           let letter = detections[0].label;
           const messageBox = document.getElementById("messageBox");
@@ -243,8 +251,9 @@ function processASL() {
           }
         }
       })
-      .catch((err) => console.error("Error in ASL detection:", err));
+      .catch((err) => console.error("Error in sign detection:", err));
   });
+  
   setTimeout(processASL, 300);
 }
 window.processASL = processASL;

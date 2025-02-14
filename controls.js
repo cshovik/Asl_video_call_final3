@@ -4,6 +4,10 @@
 var recognition;
 var isRecognizing = false;
 
+// We'll store the user's chosen sign language model here.
+// The dropdown uses values "america" or "india". We'll convert "america" to "american" internally.
+window.selectedSignLanguage = "america";
+
 if ('SpeechRecognition' in window || 'webkitSpeechRecognition' in window) {
   const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
   recognition = new SpeechRecognition();
@@ -34,16 +38,24 @@ if ('SpeechRecognition' in window || 'webkitSpeechRecognition' in window) {
 
 function initializeControls() {
   const controlsDiv = document.getElementById("controls");
-  // Updated language dropdown with additional languages and a custom styling class.
+  // We'll add a dropdown for choosing sign detection model (America/India) next to the Sign Detect button.
   controlsDiv.innerHTML = `
     <button id="muteButton" class="btn-mute">Mute</button>
     <button id="cameraButton" class="btn-camera">Camera Off</button>
+
+    <!-- Sign language model dropdown -->
+    <select id="signLanguageSelect" class="language-select" style="margin-left:10px;">
+      <option value="america">America</option>
+      <option value="india">India</option>
+    </select>
+
     <button id="signDetectButton" class="btn-sign">Sign Detect On</button>
     <button id="leaveCallButton" class="btn-leave">Leave Call</button>
     <button id="chatButton" class="btn-chat">Chat</button>
-    <!-- Text box for message input or ASL letters -->
+
     <input type="text" id="messageBox" placeholder="Message / ASL Letters" style="width:200px; margin-left:10px;">
-    <!-- Updated language dropdown for translation/TTS with custom class "language-select" -->
+
+    <!-- Translation language dropdown -->
     <select id="translationLanguage" class="language-select" style="margin-left:10px;">
       <option value="hi">Hindi</option>
       <option value="ta">Tamil</option>
@@ -59,12 +71,13 @@ function initializeControls() {
       <option value="kn">Kannada</option>
       <option value="mr">Marathi</option>
       <option value="pa">Punjabi</option>
-
     </select>
+
     <button id="speechButton" class="btn-speech">Speak</button>
     <button id="clearButton" class="btn-clear">Clear</button>
   `;
 
+  // Attach event listeners
   document.getElementById("muteButton").addEventListener("click", toggleMute);
   document.getElementById("cameraButton").addEventListener("click", toggleCamera);
   document.getElementById("signDetectButton").addEventListener("click", toggleSignDetection);
@@ -73,10 +86,15 @@ function initializeControls() {
   document.getElementById("clearButton").addEventListener("click", clearMessage);
   document.getElementById("chatButton").addEventListener("click", toggleChatBox);
 
-  // Create the chat box if it doesn't exist.
   if (!document.getElementById("chatBox")) {
     createChatBox();
   }
+
+  // Update selected sign language when user changes the dropdown.
+  const signSelect = document.getElementById("signLanguageSelect");
+  signSelect.addEventListener("change", () => {
+    window.selectedSignLanguage = signSelect.value; // "america" or "india"
+  });
 }
 
 function toggleMute() {
@@ -95,12 +113,27 @@ function toggleCamera() {
   }
 }
 
+/**
+ * Toggles sign detection on/off.
+ * When turning on, a pop-up message appears indicating which detection mode is starting.
+ */
 function toggleSignDetection() {
   detectASL = !detectASL;
-  document.getElementById("signDetectButton").textContent = detectASL ? "Sign Detect Off" : "Sign Detect On";
+  const signBtn = document.getElementById("signDetectButton");
+  signBtn.textContent = detectASL ? "Sign Detect Off" : "Sign Detect On";
+  
   if (detectASL) {
+    // Read selected option from the dropdown.
+    const signSelect = document.getElementById("signLanguageSelect");
+    let chosen = signSelect.value; // "america" or "india"
+    // Convert "america" to "american" for our backend.
+    let modelType = chosen === "india" ? "indian" : "american";
+    // Pop up message to notify the user.
+    alert(`${modelType.charAt(0).toUpperCase() + modelType.slice(1)} sign language detection on`);
+    // Start detection loop.
     processASL();
   } else {
+    // Stop detection by removing the overlay canvas.
     const localWrapper = document.querySelector('.video-wrapper[data-id="local"]');
     if (localWrapper) {
       const canvas = localWrapper.querySelector("#aslCanvas");
@@ -118,12 +151,11 @@ function leaveCall() {
   window.location.reload();
 }
 
-/* --- Modified Speak Functionality (Translation/TTS) --- */
+/* --- Translation/TTS Functionality --- */
 function sendSpeech() {
   const message = document.getElementById("messageBox").value;
   const language = document.getElementById("translationLanguage").value;
   if (message.trim().length > 0) {
-    // Send text to the translation endpoint
     fetch("http://localhost:5000/translate", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -140,16 +172,13 @@ function sendSpeech() {
           alert("Error: " + data.error);
           return;
         }
-        // Update the text box with the translated text.
         document.getElementById("messageBox").value = data.translated_text;
-        // Emit the chat message along with the audio URL.
         socket.emit("chat", {
           message: data.translated_text,
           name: window.userName,
           isSpeech: true,
           audio_url: data.audio_url
         });
-        // Play the generated audio locally.
         let audio = new Audio(data.audio_url);
         audio.play().catch(err => console.error("Audio play error:", err));
       })
@@ -170,7 +199,7 @@ function speakMessage(message) {
 }
 window.speakMessage = speakMessage;
 
-/* ----- Chat Box Functions ----- */
+/* --- Chat Box Functions --- */
 function toggleChatBox() {
   const chatBox = document.getElementById("chatBox");
   chatBox.style.display = (chatBox.style.display === "none" || chatBox.style.display === "") ? "flex" : "none";

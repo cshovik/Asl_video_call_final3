@@ -15,19 +15,27 @@ CORS(app)  # Enable CORS for all routes
 # Set up logging
 logging.basicConfig(level=logging.DEBUG)
 
-# Load YOLO model for sign detection (ensure "best.pt" is in the same directory)
-model = YOLO("best.pt")
+# Load BOTH YOLO models:
+#  - best.pt for American sign language
+#  - isl_best.pt for Indian sign language
+model_american = YOLO("best.pt")
+model_indian = YOLO("isl_best.pt")
 
 # Initialize translator for TTS translation
 translator = Translator()
 
-# 🏠 Home route to confirm the server is running
 @app.route('/')
 def home():
     return "Flask backend is running! 🚀", 200
 
 @app.route('/detect', methods=['POST'])
 def detect():
+    """
+    Reads 'modelType' from form data:
+      - 'american' => use best.pt
+      - 'indian'   => use isl_best.pt
+    Defaults to 'american' if not specified.
+    """
     try:
         file = request.files['frame']
         file_bytes = file.read()
@@ -36,7 +44,13 @@ def detect():
         npimg = np.frombuffer(file_bytes, np.uint8)
         frame = cv2.imdecode(npimg, cv2.IMREAD_COLOR)
 
-        results = model.predict(source=frame, conf=0.25)
+        model_type = request.form.get("modelType", "american")
+        if model_type == "indian":
+            chosen_model = model_indian
+        else:
+            chosen_model = model_american
+
+        results = chosen_model.predict(source=frame, conf=0.25)
         detections = []
         for result in results:
             for box in result.boxes:
