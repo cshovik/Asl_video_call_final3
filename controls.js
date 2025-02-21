@@ -4,12 +4,18 @@
 var recognition;
 var isRecognizing = false;
 
+// Global variables for message box voice recognition.
+var messageRecognition;
+var isMessageRecognizing = false;
+
 // We'll store the user's chosen sign language model here.
 // The dropdown uses values "america" or "india". We'll convert "america" to "american" internally.
 window.selectedSignLanguage = "america";
 
 if ('SpeechRecognition' in window || 'webkitSpeechRecognition' in window) {
   const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+  
+  // For chat voice recognition
   recognition = new SpeechRecognition();
   recognition.continuous = true;       // Keep listening continuously.
   recognition.interimResults = false;  // Use final results only.
@@ -27,18 +33,34 @@ if ('SpeechRecognition' in window || 'webkitSpeechRecognition' in window) {
     }
   };
   recognition.onerror = function (event) {
-    console.error("Speech recognition error:", event.error);
+    console.error("Chat speech recognition error:", event.error);
     isRecognizing = false;
     let voiceBtn = document.getElementById("voiceChatButton");
     if (voiceBtn) {
       voiceBtn.textContent = "🎤";
     }
   };
+
+  // For message box voice recognition (speech-to-text for translation input)
+  messageRecognition = new SpeechRecognition();
+  messageRecognition.continuous = false; // single-shot mode
+  messageRecognition.interimResults = false;
+  messageRecognition.lang = 'en-US';
+  messageRecognition.onresult = function(event) {
+    let transcript = event.results[0][0].transcript;
+    let messageBox = document.getElementById("messageBox");
+    if (messageBox) {
+      messageBox.value += transcript;
+    }
+  };
+  messageRecognition.onerror = function(event) {
+    console.error("Message voice recognition error:", event.error);
+  };
 }
 
 function initializeControls() {
   const controlsDiv = document.getElementById("controls");
-  // We'll add a dropdown for choosing sign detection model (America/India) next to the Sign Detect button.
+  // Updated controls HTML: added a new voice input button (for messageBox) after the message box.
   controlsDiv.innerHTML = `
     <button id="muteButton" class="btn-mute">Mute</button>
     <button id="cameraButton" class="btn-camera">Camera Off</button>
@@ -53,9 +75,12 @@ function initializeControls() {
     <button id="leaveCallButton" class="btn-leave">Leave Call</button>
     <button id="chatButton" class="btn-chat">Chat</button>
 
+    <!-- Message box for gesture text or manual input -->
     <input type="text" id="messageBox" placeholder="Message / ASL Letters" style="width:200px; margin-left:10px;">
+    <!-- New voice input button for messageBox -->
+    <button id="voiceInputButton" class="btn-voice-input" style="margin-left:5px;">🎤</button>
 
-    <!-- Translation language dropdown -->
+    <!-- Translation language dropdown for video translation -->
     <select id="translationLanguage" class="language-select" style="margin-left:10px;">
       <option value="hi">Hindi</option>
       <option value="ta">Tamil</option>
@@ -85,6 +110,9 @@ function initializeControls() {
   document.getElementById("speechButton").addEventListener("click", sendSpeech);
   document.getElementById("clearButton").addEventListener("click", clearMessage);
   document.getElementById("chatButton").addEventListener("click", toggleChatBox);
+  
+  // New: attach event listener to voice input button for messageBox.
+  document.getElementById("voiceInputButton").addEventListener("click", toggleVoiceInput);
 
   if (!document.getElementById("chatBox")) {
     createChatBox();
@@ -115,7 +143,7 @@ function toggleCamera() {
 
 /**
  * Toggles sign detection on/off.
- * When turning on, a pop-up message appears indicating which detection mode is starting.
+ * When turning on, a pop-up message indicates which detection mode is starting.
  */
 function toggleSignDetection() {
   detectASL = !detectASL;
@@ -230,6 +258,24 @@ function createChatBox() {
     <div class="chat-input" style="display: flex; border-top: 1px solid #444;">
       <input type="text" id="chatInput" placeholder="Type your message here..." style="flex: 1; padding: 10px; border: none; outline: none; background: #222; color: #fff;">
       <button id="voiceChatButton" style="padding: 10px; background: #555; border: none; color: #fff; cursor: pointer;">🎤</button>
+      <!-- Chat language dropdown with smaller width -->
+      <select id="chatLanguageSelect" class="language-select" style="margin-left: 5px; width: 80px;">
+        <option value="">No Translation</option>
+      <option value="hi">Hindi</option>
+      <option value="ta">Tamil</option>
+      <option value="te">Telugu</option>
+      <option value="bn">Bengali</option>
+      <option value="en">English</option>
+      <option value="fr">French</option>
+      <option value="es">Spanish</option>
+      <option value="de">German</option>
+      <option value="zh-cn">Chinese</option>
+      <option value="ko">Korean</option>
+      <option value="ja">Japanese</option>
+      <option value="kn">Kannada</option>
+      <option value="mr">Marathi</option>
+      <option value="pa">Punjabi</option>
+      </select>
       <button id="sendChat" style="padding: 10px; background: #2196F3; border: none; color: #fff; cursor: pointer;">Send</button>
     </div>
   `;
@@ -267,12 +313,50 @@ function sendChatMessage() {
   const chatInput = document.getElementById("chatInput");
   const message = chatInput.value.trim();
   if (message.length === 0) return;
-  const data = { message: message, name: window.userName };
-  if (window.socket) {
-    window.socket.emit("chat", data);
+
+  // Get target language for chat translation from the dropdown.
+  const chatLangSelect = document.getElementById("chatLanguageSelect");
+  const targetLang = chatLangSelect.value; // If empty, no translation will occur.
+
+  if (targetLang) {
+    // Translate message before sending.
+    fetch("http://localhost:5000/translate", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text: message, language: targetLang })
+    })
+      .then(response => {
+        if (!response.ok) {
+          throw new Error(`Server error: ${response.status}`);
+        }
+        return response.json();
+      })
+      .then(data => {
+        if (data.error) {
+          alert("Error: " + data.error);
+          return;
+        }
+        const translatedMsg = data.translated_text;
+        const dataToSend = { message: translatedMsg, name: window.userName };
+        if (window.socket) {
+          window.socket.emit("chat", dataToSend);
+        }
+        appendChatMessage(dataToSend);
+        chatInput.value = "";
+      })
+      .catch(error => {
+        console.error("Error in chat translation:", error);
+        alert("Something went wrong: " + error.message);
+      });
+  } else {
+    // No translation selected; send original message.
+    const dataToSend = { message: message, name: window.userName };
+    if (window.socket) {
+      window.socket.emit("chat", dataToSend);
+    }
+    appendChatMessage(dataToSend);
+    chatInput.value = "";
   }
-  appendChatMessage(data);
-  chatInput.value = "";
 }
 
 function appendChatMessage(data) {
@@ -284,4 +368,21 @@ function appendChatMessage(data) {
   messageElem.textContent = data.name + ": " + data.message;
   messagesContainer.appendChild(messageElem);
   messagesContainer.scrollTop = messagesContainer.scrollHeight;
+}
+
+/**
+ * Toggles voice input for the message box.
+ * When activated, speech is converted to text and appended to the message box.
+ */
+function toggleVoiceInput() {
+  const voiceBtn = document.getElementById("voiceInputButton");
+  if (!isMessageRecognizing) {
+    messageRecognition.start();
+    isMessageRecognizing = true;
+    voiceBtn.textContent = "🛑"; // indicate stop
+  } else {
+    messageRecognition.stop();
+    isMessageRecognizing = false;
+    voiceBtn.textContent = "🎤";
+  }
 }
